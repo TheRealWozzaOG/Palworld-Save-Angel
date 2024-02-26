@@ -1,0 +1,676 @@
+import os
+import shutil
+import tkinter as tk
+from tkinter import messagebox, simpledialog
+from datetime import datetime, timedelta
+import json
+from PIL import Image, ImageTk
+import threading
+
+def find_pal_folders():
+        windows_path = os.path.join(os.path.expanduser("~"), "AppData", "Local", "Pal", "Saved", "SaveGames")
+        if os.path.exists(windows_path):
+            dynamic_folder = None
+            if os.path.exists(windows_path):
+                for folder in os.listdir(windows_path):
+                    full_folder_path = os.path.join(windows_path, folder)
+                    if os.path.isdir(full_folder_path):
+                        if is_dynamic_folder(full_folder_path):
+                            dynamic_folder = full_folder_path
+                            print(f"Dynamic folder found: {folder}")
+                            break
+            if dynamic_folder is None:
+                print("Dynamic folder not found.")
+
+            pal_save_angel_folder = os.path.join(windows_path, "Palworld Save Angel")
+            if not os.path.exists(pal_save_angel_folder):
+                os.makedirs(pal_save_angel_folder)
+                print(f"Palworld Save Angel Folder created at: {pal_save_angel_folder}")
+            else:
+                print(f"Palworld Save Angel folder already exists at: {pal_save_angel_folder}")
+
+            return dynamic_folder
+        else:
+            display_message("Error: Pal SaveGames folder not found.")
+            return None
+
+        
+class PalworldSaveAngelApp(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Palworld Save Angel")
+        self.geometry("650x500")
+        self.configure(bg="black")
+        self.dynamic_folder = find_pal_folders()
+        self.selected_folder = tk.StringVar(self)
+        self.selected_folder.set("Select a folder")
+        self.interval_var = tk.StringVar(self)
+        self.interval_var.set("Select an interval")
+        self.last_backup_time = None
+        self.autosave_enabled = False
+        self.create_menu()
+        self.scheduled_backup_folder = None
+        self.backup_timer_id = None
+
+        # Add a label at the top
+        self.top_label = tk.Label(self, text="PALWORLD MUST RUNNING IN THE BACKGROUND", bg="black", fg="white")
+        self.top_label.place(relx=0.5, rely=0.036, anchor="center")
+
+# Add a label at the bottom
+        self.bottom_label = tk.Label(self, text="Created by @TheRealWozzaOG", bg="black", fg="white")
+        self.bottom_label.place(relx=0.5, rely=0.957, anchor="center")
+
+# Create labels for listboxes
+        self.listbox_label = tk.Label(self, text="Palworld Game Save Folder:", bg="black", fg="#ffa3d6", font=("Arial", 10, "bold"))
+        self.listbox_label.place(x=89, y=178.4)
+
+        self.second_listbox_label = tk.Label(self, text="Palworld Save Angel Folder:", bg="black", fg="#ffa3d6", font=("Arial", 10, "bold"))
+        self.second_listbox_label.place(x=379, y=178.4)
+
+        # Timer label
+        self.timer_label = tk.Label(self, text="", font=("Arial", 12, "bold"), fg="#ffa3d6", bg="black") 
+        self.timer_label.place(relx=0.5, y=110, anchor="center")
+        self.update_timer()
+
+        # Top frame
+        top_frame = tk.Frame(self, bg="black")
+        top_frame.place(relx=0.508, y=150, anchor="center")
+
+        # Frame for dropdown boxes
+        self.dropdown_frame = tk.Frame(top_frame, bg="black")
+        self.dropdown_frame.pack(side=tk.LEFT, padx=10)
+
+        # Dropdown box for selecting folder
+        folders = self.find_game_save_folders()
+        self.dropdown_box = tk.OptionMenu(self.dropdown_frame, self.selected_folder, *folders)
+        self.dropdown_box.config(bg="#f28444", fg="white", font=("Arial", 12, "bold"))
+        self.dropdown_box.pack(side=tk.LEFT, padx=(0, 20))
+        dropdown_menu = self.dropdown_box.nametowidget(self.dropdown_box.menuname)
+        dropdown_menu.config(bg='#ffa3d6', activebackground='#f28444')
+
+        # Dropdown for selecting backup interval
+        interval_options = ["Select an interval", "1 minute", "5 minutes", "10 minutes", "30 minutes", "1 hour", "3 hours", "5 hours", "10 seconds"]
+        self.interval_dropdown = tk.OptionMenu(self.dropdown_frame, self.interval_var, *interval_options)
+        self.interval_dropdown.config(bg="#f28444", fg="white", font=("Arial", 12, "bold"))
+        self.interval_dropdown.pack(side=tk.LEFT, padx=(0, 10))
+        interval_menu = self.interval_dropdown.nametowidget(self.interval_dropdown.menuname)
+        interval_menu.config(bg='#ffa3d6', activebackground='#f28444')
+
+        # Frame for autosave button with border
+        self.autosave_frame = tk.Frame(top_frame, bg="white", bd=2)  # White frame acting as border
+        self.autosave_frame.pack(side=tk.LEFT, padx=(0, 10))
+
+        # Button to toggle autosave
+        self.autosave_button = tk.Button(self.autosave_frame, text="Autosave Disabled", bg="#f28444", fg="white", font=("Arial", 12, "bold"), command=self.toggle_autosave)
+        self.autosave_button.pack(fill=tk.BOTH, expand=True)
+        self.autosave_button.config(highlightbackground="white", highlightthickness=1, bd=0)  # Configuration for autosave button
+
+        # Middle frame
+        middle_frame = tk.Frame(self, bg="black")
+        middle_frame.place(relx=0.5, rely=0.57, anchor="center")
+
+# Frame for the original listbox
+        original_listbox_frame = tk.Frame(middle_frame, bg="black")
+        original_listbox_frame.pack(side=tk.LEFT, padx=(10, 0))
+
+# Listbox to display folders
+        self.listbox = tk.Listbox(original_listbox_frame, font=("Arial", 12), fg="black", bg="#f28444", width=31, height=8, selectbackground="#ffa3d6")
+        self.listbox.pack(pady=10)
+        for folder in folders:
+            self.listbox.insert(tk.END, folder)
+
+# Frame for spacing between list boxes
+        spacing_frame = tk.Frame(middle_frame, bg="black")
+        spacing_frame.pack(side=tk.LEFT, padx=0)
+
+        # Frame for the new listbox
+        new_listbox_frame = tk.Frame(middle_frame, bg="black")
+        new_listbox_frame.pack(side=tk.LEFT, padx=(5, 10))
+
+        # New listbox to display folders
+        self.second_listbox = tk.Listbox(new_listbox_frame, font=("Arial", 12), fg="black", bg="#f28444", width=31, height=8, selectbackground="#ffa3d6")
+        self.second_listbox.pack(pady=10)
+
+       # Bottom frame
+        bottom_frame = tk.Frame(self, bg="black")
+        bottom_frame.place(relx=0.495, rely=0.78, anchor="center")
+
+# Frame for backup button with border
+        backup_button_frame = tk.Frame(bottom_frame, bg="white", bd=2)  # White frame acting as border
+        backup_button_frame.pack(side=tk.LEFT, padx=35)
+
+        # Backup button
+        backup_button = tk.Button(backup_button_frame, text="Backup", bg="#f28444", fg="white", command=self.backup_now)
+        backup_button.pack(fill=tk.BOTH, expand=True)
+        backup_button.config(highlightbackground="white", highlightthickness=1, bd=0, font=("Arial", 10, "bold"))
+
+# Frame for rename button with border
+        rename_button_frame = tk.Frame(bottom_frame, bg="white", bd=2)  # White frame acting as border
+        rename_button_frame.pack(side=tk.LEFT, padx=35)
+
+# Rename button
+        rename_button = tk.Button(rename_button_frame, text="Rename", bg="#f28444", fg="white", command=self.rename_folder_prompt)
+        rename_button.pack(fill=tk.BOTH, expand=True)
+        rename_button.config(highlightbackground="white", highlightthickness=1, bd=0, font=("Arial", 10, "bold"))
+
+# Frame for restore button with border
+        restore_button_frame = tk.Frame(bottom_frame, bg="white", bd=2)  # White frame acting as border
+        restore_button_frame.pack(side=tk.LEFT, padx=35)
+
+        # Restore button
+        restore_button = tk.Button(restore_button_frame, text="Restore", bg="#f28444", fg="white", command=self.restore_folder)
+        restore_button.pack(fill=tk.BOTH, expand=True)
+        restore_button.config(highlightbackground="white", highlightthickness=1, bd=0, font=("Arial", 10, "bold"))
+
+
+# Frame for delete button with border
+        delete_button_frame = tk.Frame(bottom_frame, bg="white", bd=2)  # White frame acting as border
+        delete_button_frame.pack(side=tk.LEFT, padx=35)
+
+# Delete button
+        delete_button = tk.Button(delete_button_frame, text="Delete", bg="#f28444", fg="white", command=self.delete_folder)
+        delete_button.pack(fill=tk.BOTH, expand=True)
+        delete_button.config(highlightbackground="white", highlightthickness=1, bd=0, font=("Arial", 10, "bold"))
+
+        # Message text widget
+        self.message_text = tk.Text(self, bg="#ffa3d6", fg="black", font=("Arial", 8), state="disabled", width=100, height=3)
+        self.message_text.place(relx=0.5, rely=0.88, anchor="center")
+
+        self.resizable(False, False)
+
+    def display_error_message(self, message):
+        """Display an error message."""
+        self.write_to_text_widget(f"Error: {message}")
+
+    def display_info_message(self, message):
+        """Display an info message."""
+        self.write_to_text_widget(f"Info: {message}")
+
+
+    def find_pal_folders(self):
+        windows_path = os.path.join(os.path.expanduser("~"), "AppData", "Local", "Pal", "Saved", "SaveGames")
+        if os.path.exists(windows_path):
+            dynamic_folder = None
+            for folder in os.listdir(windows_path):
+                full_folder_path = os.path.join(windows_path, folder)
+                if os.path.isdir(full_folder_path):
+                    if is_dynamic_folder(full_folder_path):
+                        dynamic_folder = full_folder_path
+                        self.display_info_message(f"Dynamic folder found: {folder}")
+                        break
+            if dynamic_folder is None:
+                self.display_error_message("Dynamic folder not found.")
+                return None
+
+            pal_save_angel_folder = os.path.join(windows_path, "Palworld Save Angel")
+            if not os.path.exists(pal_save_angel_folder):
+                os.makedirs(pal_save_angel_folder)
+                self.display_info_message(f"Palworld Save Angel Folder created at: {pal_save_angel_folder}")
+            else:
+                self.display_info_message(f"Palworld Save Angel folder already exists at: {pal_save_angel_folder}")
+
+            return dynamic_folder
+        else:
+            self.display_error_message("Error: Pal SaveGames folder not found.")
+            return None
+
+    def toggle_autosave(self):
+        selected_folder = self.selected_folder.get()
+        interval = self.interval_var.get()
+
+        if selected_folder == "Select a folder" or interval == "Select an interval":
+            self.display_error_message("Please select both a folder and an interval.")
+            return
+
+        if not self.autosave_enabled:
+            self.autosave_enabled = True
+            self.autosave_button.config(text="Autosave Enabled", bg="#ffa3d6")
+            self.display_error_message("Autosave is now enabled. Your game save will be backed up every {interval}.")
+            self.display_info_message(message)
+            self.save_settings()  # Save settings immediately
+            if selected_folder != "Select a folder":
+                self.perform_backup(selected_folder)  # Create a backup when autosave is enabled
+            self.start_backup_timer()  # Start the scheduled backups
+        else:
+            self.autosave_enabled = False
+            self.autosave_button.config(text="Autosave Disabled", bg="#f28444")
+            self.display_info_message("Autosave is now disabled. Your game save is no longer being backed up.")
+        if self.backup_timer_id:
+            self.after_cancel(self.backup_timer_id)
+        
+
+    def create_menu(self):
+        image_path = r"C:\Users\Wozza\Desktop\neon-border-amoled-black-waadasdllpaper-s07.jpg"
+        img = Image.open(image_path)
+        img = img.resize((650, 500), Image.BILINEAR)
+        img = ImageTk.PhotoImage(img)
+        self.background_label = tk.Label(self, image=img)
+        self.background_label.image = img
+        self.background_label.place(x=0, y=0)
+
+        # Title label with enhancements
+        title_label = tk.Label(self, text="Palworld Save Angel", font=("Impact", 30, "bold"), fg="#f28444", bg="black")  # Increased font size and bold, orange font color
+        title_label.place(relx=0.5, y=70, anchor="center")
+        title_label.config(highlightbackground="black", highlightcolor="black", highlightthickness=1)  # White text outline
+
+
+    def toggle_autosave(self):
+        selected_folder = self.selected_folder.get()
+        interval = self.interval_var.get()
+
+        if selected_folder == "Select a folder" or interval == "Select an interval":
+            self.display_error_message("Error", "Please select both a folder and an interval.")
+            return
+
+        if not self.autosave_enabled:
+            self.autosave_enabled = True
+            self.autosave_button.config(text="Autosave Enabled", bg="#ffa3d6")
+            message = f"Autosave is now enabled. Your game save will be backed up every {interval}."
+            self.display_message(message)
+            self.save_settings()  # Save settings immediately
+            if selected_folder != "Select a folder":
+                self.perform_backup(selected_folder)  # Create a backup when autosave is enabled
+            self.start_backup_timer()  # Start the scheduled backups
+        else:
+            self.autosave_enabled = False
+            self.autosave_button.config(text="Autosave Disabled", bg="#f28444")
+            self.display_message("Autosave is now disabled. Your game save is no longer being backed up.")
+        if self.backup_timer_id:
+            self.after_cancel(self.backup_timer_id)
+        
+
+    def backup_now(self):
+        selected_index = self.listbox.curselection()
+        if selected_index:
+            selected_folder = self.listbox.get(selected_index[0])
+            threading.Thread(target=self.perform_backup, args=(selected_folder, True)).start()
+            self.display_info_message(f"Manual backup initiated for '{selected_folder}'.")
+        else:
+            self.display_error_message("Please select a folder from the list.")
+
+    def perform_backup(self, folder_name, manual_backup=False):
+        src_folder = os.path.join(self.dynamic_folder, folder_name)
+        backup_folder_base_name = f"{folder_name}_SaveAngel_"
+
+    # Find the next available index for the backup folder
+        backup_folder_index = self.get_next_backup_index(folder_name)
+
+    # Construct the backup folder name with the incremented index
+        backup_folder_name = f"{backup_folder_base_name}{backup_folder_index}"
+
+    # Update backup folder path to point to Palworld Save Angel folder
+        palworld_save_angel_folder = os.path.join(os.path.expanduser("~"), "AppData", "Local", "Pal", "Saved", "SaveGames", "Palworld Save Angel")
+        backup_folder_path = os.path.join(palworld_save_angel_folder, backup_folder_name)
+
+        try:
+        # Check if the backup folder already exists, if so, increment the index until a unique name is found
+            while os.path.exists(backup_folder_path):
+                backup_folder_index += 1
+                backup_folder_name = f"{backup_folder_base_name}{backup_folder_index}"
+                backup_folder_path = os.path.join(palworld_save_angel_folder, backup_folder_name)
+
+        # Perform the backup
+            shutil.copytree(src_folder, backup_folder_path)
+            self.display_message(f"Backup of '{folder_name}' created successfully.")
+        
+        # Update all components after backup
+            self.update_second_listbox()
+            self.update_folder_list()
+            self.update_dropdowns()
+        
+            if manual_backup:
+                return  # If manual backup, don't update last_backup_time or reset timer
+            if self.autosave_enabled:  # Only reset timer if autosave is enabled
+                self.last_backup_time = datetime.now()  # Update last backup time
+                
+
+        except Exception as e:
+            self.display_message(f"Failed to create backup: {str(e)}")
+
+    def perform_scheduled_backup(self):
+        if self.scheduled_backup_folder:
+            if self.scheduled_backup_folder in self.find_game_save_folders():
+                # Update backup folder path to point to Palworld Save Angel folder
+                palworld_save_angel_folder = os.path.join(os.path.expanduser("~"), "AppData", "Local", "Pal", "Saved", "SaveGames", "Palworld Save Angel")
+                backup_folder_base_name = f"{self.scheduled_backup_folder}_SaveAngel_"
+                backup_folder_index = self.get_next_backup_index(self.scheduled_backup_folder)
+                backup_folder_name = f"{backup_folder_base_name}{backup_folder_index}"
+                backup_folder_path = os.path.join(palworld_save_angel_folder, backup_folder_name)
+                
+                try:
+                    # Check if the backup folder already exists, if so, increment the index until a unique name is found
+                    while os.path.exists(backup_folder_path):
+                        backup_folder_index += 1
+                        backup_folder_name = f"{backup_folder_base_name}{backup_folder_index}"
+                        backup_folder_path = os.path.join(palworld_save_angel_folder, backup_folder_name)
+                    
+                    # Perform the backup
+                    src_folder = os.path.join(self.dynamic_folder, self.scheduled_backup_folder)
+                    shutil.copytree(src_folder, backup_folder_path)
+                    self.display_message(f"Auto backup of '{self.scheduled_backup_folder}' created successfully as '{backup_folder_name}'.")
+                    self.update_second_listbox()  # Update the second listbox to display the newly created backup
+                    self.last_backup_time = datetime.now()  # Update last backup time
+                    self.start_backup_timer()  # Reset timer
+                except Exception as e:
+                    self.display_message(f"Error: Failed to create backup: {str(e)}")
+            else:
+                self.autosave_enabled = False
+                self.autosave_button.config(text="Autosave Disabled", bg="#f28444")
+                self.display_message(f"Autosave is disabled because the selected folder '{self.scheduled_backup_folder}' cannot be found.")
+                self.stop_backup_timer()
+        if self.autosave_enabled:  # Only start the timer if autosave is enabled
+            self.start_backup_timer()
+
+
+    def stop_scheduled_backup(self):
+        if self.backup_timer_id:
+            self.after_cancel(self.backup_timer_id)
+
+    def convert_interval_to_seconds(self, interval):
+        if "1 minute" in interval:
+            return 60
+        elif "5 minutes" in interval:
+            return 5 * 60
+        elif "10 minutes" in interval:
+            return 10 * 60
+        elif "30 minutes" in interval:
+            return 30 * 60
+        elif "1 hour" in interval:
+            return 60 * 60
+        elif "3 hours" in interval:
+            return 3 * 60 * 60
+        elif "5 hours" in interval:
+            return 5 * 60 * 60
+        elif "10 seconds" in interval:
+            return 10
+        else:
+            return 0
+
+    def get_next_backup_index(self, selected_folder):
+        backup_indexes = []
+        for item in os.listdir(self.dynamic_folder):
+            if item.startswith(selected_folder + "_SaveAngel_"):
+                parts = item.split("_")
+                if len(parts) == 4:
+                    try:
+                        index = int(parts[-1])
+                        backup_indexes.append(index)
+                    except ValueError:
+                        pass
+        if backup_indexes:
+            next_index = max(backup_indexes) + 1
+        else:
+            next_index = 1
+        backup_folder_name = f"{selected_folder}_SaveAngel_{next_index}"
+        while os.path.exists(os.path.join(self.dynamic_folder, backup_folder_name)):
+            next_index += 1
+            backup_folder_name = f"{selected_folder}_SaveAngel_{next_index}"
+        return next_index
+
+    def update_timer(self):
+        interval = self.interval_var.get()
+        if interval != "Select an interval":
+            interval_seconds = self.convert_interval_to_seconds(interval)
+            if self.autosave_enabled:
+                if self.last_backup_time is not None:
+                    elapsed_time = (datetime.now() - self.last_backup_time).total_seconds()
+                    remaining_seconds = max(0, interval_seconds - elapsed_time)
+                    if remaining_seconds == 0:
+                        self.last_backup_time = datetime.now()  # Reset last backup time
+                        self.perform_scheduled_backup()  # Perform backup when timer hits 0
+                    remaining_time = timedelta(seconds=remaining_seconds)
+                    remaining_time_str = str(remaining_time).split(".")[0]
+                    self.timer_label.config(text=f"Next Backup in: {remaining_time_str}")
+                else:
+                    self.timer_label.config(text=f"Next Backup in: {interval}")
+            else:
+                self.timer_label.config(text="")
+        self.after(100, self.update_timer)
+
+
+    def start_backup_timer(self):
+        interval = self.interval_var.get()
+        if interval != "Select an interval":
+            interval_seconds = self.convert_interval_to_seconds(interval)
+            if self.last_backup_time is not None:
+                elapsed_time = (datetime.now() - self.last_backup_time).total_seconds()
+                remaining_seconds = max(0, interval_seconds - elapsed_time)
+            else:
+                remaining_seconds = interval_seconds
+            if self.backup_timer_id:
+                self.after_cancel(self.backup_timer_id)  # Cancel existing timer
+            self.backup_timer_id = self.after(int(remaining_seconds) * 1000, self.perform_scheduled_backup)
+    def find_game_save_folders(self):
+        if self.dynamic_folder:
+            game_save_folders = []
+            folders_with_time = []
+            for folder in os.listdir(self.dynamic_folder):
+                full_folder_path = os.path.join(self.dynamic_folder, folder)
+                if os.path.isdir(full_folder_path):
+                    modified_time = os.path.getmtime(full_folder_path)
+                    folders_with_time.append((folder, modified_time))
+            sorted_folders = sorted(folders_with_time, key=lambda x: x[1], reverse=True)
+            game_save_folders = [folder[0] for folder in sorted_folders]
+            return game_save_folders
+        else:
+            return ["Dynamic folder not found"]
+
+    def display_message(self, message):
+        self.message_text.config(state="normal")
+
+        # Get the current content of the text widget
+        current_content = self.message_text.get("1.0", "end").splitlines()
+
+        # Keep only the last 49 messages (excluding the current one)
+        previous_messages = current_content[-49:]
+
+        # Add the new message at the end
+        updated_content = "\n".join(previous_messages + [message])
+
+        # Clear the text widget and insert all previous messages plus the new one
+        self.message_text.delete("1.0", "end")
+        self.message_text.insert("1.0", updated_content)
+
+        self.message_text.config(state="disabled")
+        self.message_text.see("end")  # Scroll to the end to show the latest message
+
+    def save_settings(self):
+        selected_folder = self.selected_folder.get()
+        interval = self.interval_var.get()
+        if selected_folder != "Select a folder" and interval != "Select an interval":
+            self.scheduled_backup_folder = selected_folder
+            settings = {'scheduled_backup_folder': selected_folder, 'interval': interval}
+            self.save_settings_to_json(settings)
+            self.last_backup_time = datetime.now()
+            self.start_backup_timer()
+            self.update_timer()
+        else:
+            self.display_error_message("Error", "Please select both a folder and an interval.")
+
+    def save_settings_to_json(self, settings):
+        with open('settings.json', 'w') as f:
+            json.dump(settings, f)
+
+    def update_folder_list(self):
+        selected_folder = self.selected_folder.get()
+        folders = self.find_game_save_folders()
+
+        self.listbox.delete(0, tk.END)
+        for folder in folders:
+            self.listbox.insert(tk.END, folder)
+
+        self.selected_folder.set("Select a folder")
+        self.dropdown_box['menu'].delete(0, 'end')
+        for folder in folders:
+            self.dropdown_box['menu'].add_command(label=folder, command=tk._setit(self.selected_folder, folder))
+
+        self.selected_folder.set(selected_folder)
+
+    def update_second_listbox(self):
+        print("Updating second listbox...")
+        save_games_folder = os.path.dirname(self.dynamic_folder)
+        pal_save_angel_folder = os.path.join(save_games_folder, "Palworld Save Angel")
+        print("Path checked:", pal_save_angel_folder)
+        if os.path.exists(pal_save_angel_folder):
+            print(f"Palworld Save Angel folder found at: {pal_save_angel_folder}")
+            folders = [folder for folder in os.listdir(pal_save_angel_folder) if os.path.isdir(os.path.join(pal_save_angel_folder, folder))]
+            print("Folders found in Palworld Save Angel folder:")
+            print(folders)
+            self.second_listbox.delete(0, tk.END)
+            for folder in folders:
+                self.second_listbox.insert(tk.END, folder)
+        else:
+            self.display_message("Palworld Save Angel folder not found.")
+
+
+    def restore_folder(self):
+        selected_index = self.second_listbox.curselection()
+        if selected_index:
+            selected_folder = self.second_listbox.get(selected_index[0])
+            src_folder = os.path.join(os.path.expanduser("~"), "AppData", "Local", "Pal", "Saved", "SaveGames", "Palworld Save Angel", selected_folder)
+
+            print("Source folder:", src_folder)  
+
+            backup_folder_index = self.get_next_backup_index(selected_folder)
+            backup_folder_base_name = f"{selected_folder}_AngelRestored_"
+            backup_folder_name = backup_folder_base_name + str(backup_folder_index)
+            backup_folder_path = os.path.join(self.dynamic_folder, backup_folder_name)
+    
+            try:
+                if os.path.exists(src_folder):
+                    while os.path.exists(backup_folder_path):
+                    # If the folder already exists, increment the index and try again
+                        backup_folder_index += 1
+                        backup_folder_name = backup_folder_base_name + str(backup_folder_index)
+                        backup_folder_path = os.path.join(self.dynamic_folder, backup_folder_name)
+
+                    shutil.copytree(src_folder, backup_folder_path)
+                    if os.path.exists(backup_folder_path):
+                        self.display_message(f"Successfully Restored '{selected_folder}' and renamed to '{backup_folder_name}'.")
+                        self.update_second_listbox()  # Update the second listbox to display the newly created backup
+                        self.update_folder_list()  # Update the first listbox
+                        self.update_dropdowns()  # Update the dropdown boxes
+                    else:
+                        self.display_message(f"Error: Failed to create backup '{backup_folder_name}'.")
+                else:
+                    self.display_message(f"Error: Selected folder '{selected_folder}' does not exist.")
+            except Exception as e:
+                self.display_message(f"Error: Failed to create backup: {str(e)}")
+        else:
+            self.display_error_message("Error", "Please select a folder from the second listbox.")
+
+    def rename_folder_prompt(self):
+        selected_index_listbox = self.listbox.curselection()
+        selected_index_second_listbox = self.second_listbox.curselection()
+
+        if selected_index_listbox:
+            selected_folder = self.listbox.get(selected_index_listbox[0])
+            listbox_name = "listbox"
+        elif selected_index_second_listbox:
+            selected_folder = self.second_listbox.get(selected_index_second_listbox[0])
+            listbox_name = "second_listbox"
+        else:
+            self.display_error_message("Error", "Please select a folder from either listbox.")
+            return
+
+        new_name = simpledialog.askstring("Rename Folder", f"Enter new name for '{selected_folder}':", parent=self)
+        if new_name:
+            self.rename_selected_folder(selected_folder, new_name, listbox_name)
+
+
+    def rename_selected_folder(self, selected_folder, new_name, listbox_name):
+        if listbox_name == "listbox":
+            src_folder = os.path.join(self.dynamic_folder, selected_folder)
+        elif listbox_name == "second_listbox":
+            src_folder = os.path.join(os.path.expanduser("~"), "AppData", "Local", "Pal", "Saved", "SaveGames", "Palworld Save Angel", selected_folder)
+    
+        new_folder_path = os.path.join(os.path.dirname(src_folder), new_name)
+        try:
+            os.rename(src_folder, new_folder_path)
+            self.display_message(f"{selected_folder} was renamed to {new_name} successfully.")
+            if listbox_name == "listbox":
+                self.update_folder_list()
+            elif listbox_name == "second_listbox":
+                self.update_second_listbox()
+        except Exception as e:
+            self.display_message(f"Error: Failed to rename folder: {str(e)}")
+
+    def delete_folder(self):
+        # Check for selection in the first listbox
+        selected_index_listbox = self.listbox.curselection()
+        # Check for selection in the second listbox
+        selected_index_second_listbox = self.second_listbox.curselection()
+
+        # Determine which listbox has a selected item and delete the corresponding folder
+        if selected_index_listbox:
+            selected_folder = self.listbox.get(selected_index_listbox[0])
+            folder_path = os.path.join(self.dynamic_folder, selected_folder)
+        elif selected_index_second_listbox:
+            selected_folder = self.second_listbox.get(selected_index_second_listbox[0])
+            folder_path = os.path.join(os.path.expanduser("~"), "AppData", "Local", "Pal", "Saved", "SaveGames", "Palworld Save Angel", selected_folder)
+        else:
+            self.display_message("No folder selected for deletion.")
+            return
+
+        # Attempt to delete the folder
+        try:
+            shutil.rmtree(folder_path)
+            self.display_message(f"{selected_folder} deleted successfully.")
+            if selected_index_listbox:
+                self.update_folder_list()
+            elif selected_index_second_listbox:
+                self.update_second_listbox()
+        except Exception as e:
+            self.display_message(f"Error: Failed to delete folder: {str(e)}")
+
+
+    def update_dropdowns(self, *args):
+        self.dropdown_box['menu'].delete(0, 'end')
+        self.interval_dropdown['menu'].delete(0, 'end')
+
+        folders = self.find_game_save_folders()
+        interval_options = ["1 minute", "5 minutes", "10 minutes", "30 minutes", "1 hour", "3 hours", "5 hours", "10 seconds"]
+
+        for folder in folders:
+            self.dropdown_box['menu'].add_command(label=folder, command=tk._setit(self.selected_folder, folder))
+
+        for option in interval_options:
+            self.interval_dropdown['menu'].add_command(label=option, command=tk._setit(self.interval_var, option))
+
+        self.update_folder_list()
+
+    def read_settings_from_json(self):
+        try:
+            with open('settings.json', 'r') as f:
+                settings = json.load(f)
+            if 'scheduled_backup_folder' in settings:
+                self.scheduled_backup_folder = settings['scheduled_backup_folder']
+                self.selected_folder.set(settings['scheduled_backup_folder'])
+            if 'interval' in settings:
+                self.interval_var.set(settings['interval'])
+        except FileNotFoundError:
+            pass
+
+class RenameDialog(simpledialog.SimpleDialog):
+    def body(self, master):
+        self.geometry("300x150")
+        self.configure(bg="black")
+        tk.Label(master, text="New Name:", bg="black", fg="white").grid(row=0)
+        self.entry = tk.Entry(master, bg="#f28444", fg="white")
+        self.entry.grid(row=0, column=1)
+        return self.entry
+
+    def apply(self):
+        self.value = self.entry.get()
+
+    
+
+
+def is_dynamic_folder(folder_path):
+    return True  # Modify this line with your actual logic
+
+if __name__ == "__main__":
+    app = PalworldSaveAngelApp()
+    app.read_settings_from_json()
+    app.update_second_listbox()  # Call the function to update the second listbox
+    app.mainloop()
